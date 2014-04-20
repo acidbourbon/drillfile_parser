@@ -4,34 +4,42 @@ use strict;
 use Device::SerialPort;
 use Time::HiRes;
 
+# the drillfile
+my $drillfile="./project.drl";
 
-open(LESEN,"./project.drl")
-  or die "Fehler beim oeffnen von : $!\n";
-  
-my @drillholes;
+my $dont_turn=0;
+my $mirror_x = -1; # 1 => no mirror, -1 => mirrored horiz
+my $mirror_y = 1; # 1 => no mirror, -1 => mirrored vert
+
+my $tolerance = 1; # mm , die if calibration fails 
+
+
+# drillfiles have to be generated with option "mirrored y axis"
+# otherwise the coordinates in the drillfile are not the same
+# as in the CAD view
+
+# mirror either x or y coordinate when you drill a PCB backside
+# (PCB backside up)
+# you still have to got to the top left and bottom right hole
+# in the respectively mirrored view!
+
+# I recommend: Take your PCB from the front side, flip it on the vertical
+# axis, so top is still top. Select mirror_x = -1. Drill, enjoy!
+
+
+# array of hashes, each hash contains info of
+# one hole
+
+# the serial port object
 my $port;
+# the address of the drill control tty
 my $ser_dev = "/dev/ttyACM0";
-my $current_tool_no;
-my %drilldias;
-
-while(defined(my $i = <LESEN>)) {
 
 
-  if ( $i =~ /^(T\d+)C(\d+.\d+)/ ) {
-#     print "found tool T".$1." with diameter ".$2."mm\n";
-    $drilldias{$1} = $2;
-  }
-  
-  if ( $i =~ /^(T\d+)$/ ) {
-    $current_tool_no = $1;
-  }
-  
-  if ( $i =~ /^X(\d+.\d+)Y(\d+.\d+)/ ) {
-#     print "Tool $current_tool_no , $1 , $2\n";
-    push(@drillholes,{tool => $current_tool_no, x => $1, y => $2, dia => $drilldias{$current_tool_no}});
-  }
+my @drillholes = slurp_drillfile();
 
-}
+
+
 
 
 
@@ -107,11 +115,11 @@ for my $i ( 0 .. $#drillholes ) {
   if (defined($topleftdistance_hs)) {
     if ($topleftdistance < $topleftdistance_hs) {
       $topleftdistance_hs = $topleftdistance;
-      $topleftdistance = $i;
+      $topleftindex = $i;
     }
   } else {
       $topleftdistance_hs = $topleftdistance;
-      $topleftdistance = $i;
+      $topleftindex = $i;
   }
   
   if (defined($bottomrightdistance_hs)) {
@@ -124,7 +132,8 @@ for my $i ( 0 .. $#drillholes ) {
       $bottomrightindex = $i;
   }
   
-  print "$i $holeX $holeY\n";
+  print "hole#$i x:$holeX y:$holeY tld:$topleftdistance brd:$bottomrightdistance\n";
+  print "tld highscore: $topleftdistance_hs, brd highscore: $bottomrightdistance_hs\n";
 }
 
 
@@ -157,13 +166,14 @@ print "topleft: $a1,$a2, bottomrgiht: $b1,$b2\n";
 init_port();
 
 my $dummy="";
-
-while(not($dummy =~ /q/)){ 
-my ($c1,$c2) = get_coordinate();
-print "position : $c1 $c2\n";
-print "repeat or continue? (q)";
-$dummy = <STDIN>;
-}
+# 
+# while(not($dummy =~ /q/)){ 
+# my ($c1,$c2) = get_coordinate();
+# print "position : $c1 $c2\n";
+# print "repeat or continue? (q)";
+# $dummy = <STDIN>;
+# $dummy = <STDIN>;
+# }
 
 print "\n\n";
 print "move to top left drill hole and press enter\n";
@@ -175,10 +185,9 @@ $dummy = <STDIN>;
 # my $c2 = $a2;
 
 my ($c1,$c2) = get_coordinate();
-my ($c1,$c2) = get_coordinate();
-my ($c1,$c2) = get_coordinate();
-my ($c1,$c2) = get_coordinate();
-my ($c1,$c2) = get_coordinate();
+$dummy = <STDIN>;
+($c1,$c2) = get_coordinate();
+
 print "vector c : $c1 $c2\n";
 
 print "good, now move to bottom right drill hole and press enter\n";
@@ -188,10 +197,10 @@ $dummy = <STDIN>;
 # my $d2 = $b2;
 
 my ($d1,$d2) = get_coordinate();
-my ($d1,$d2) = get_coordinate();
-my ($d1,$d2) = get_coordinate();
-my ($d1,$d2) = get_coordinate();
-my ($d1,$d2) = get_coordinate();
+$dummy = <STDIN>;
+($d1,$d2) = get_coordinate();
+
+
 print "vector d : $d1 $d2\n";
 
 my $p1 = $b1-$a1;
@@ -204,10 +213,55 @@ my $q1 = $d1-$c1;
 my $q2 = $d2-$c2;
 print "q: $q1,$q2\n";
 
+# this is the place where we make it a pure
+# rotation / translateon
+
+# we require that the corrected vector q has the same
+# length as p, so the transformation matrix is 
+# a pure rotation
+
+my $q_len = distance($q1,$q2,0,0);
+my $p_len = distance($p1,$p2,0,0);
+my $pq_diff = abs($p_len - $q_len);
+
+printf ("p_len : %3f mm, q_len : %3f mm\n",$p_len,$q_len);
+printf ("Calibration residuum: %3f mm\n",$pq_diff);
+
+die "calibration fail, maybe wrong drl file?\n" if ($pq_diff > $tolerance);
+
+
+
+
+my $q_hat_1 = $q1/$q_len;
+my $q_hat_2 = $q2/$q_len;
+
+# calculate midpoint between c and d
+
+my $cd1 = ($c1 + $d1)/2;
+my $cd2 = ($c2 + $d2)/2;
+
+# calculate corrected c and d 
+
+$c1 = $cd1 - $q_hat_1*$p_len/2;
+$c2 = $cd2 - $q_hat_2*$p_len/2;
+
+
+$d1 = $cd1 + $q_hat_1*$p_len/2;
+$d2 = $cd2 + $q_hat_2*$p_len/2;
+
+# corrected q vector
+$q1 = $d1-$c1;
+$q2 = $d2-$c2;
+
 # now we can calculate sine and cosine coefficients
 
 my $cos_alpha = ($p1*$q1+$p2*$q2)/($p1**2+$p2**2);
 my $sin_alpha = ($p2*$q1-$p1*$q2)/($p1**2+$p2**2);
+
+if($dont_turn){
+  $cos_alpha = 1;
+  $sin_alpha = 0;
+}
 
 print "cos_alpha : $cos_alpha, sin_alpha : $sin_alpha\n";
 print "sum of squares (should be 1): ".($cos_alpha**2+$sin_alpha**2)."\n";
@@ -273,8 +327,11 @@ for my $i ( 0 .. $#drillholes ) {
 
 
 sub get_coordinate {
-
-  my $answer =  communicate("");
+  my $answer = communicate("");
+#   for (1..10) {
+#     Time::HiRes::sleep(.01);
+#     $answer =  communicate("");
+#   }
   $answer =~ m/x_pos:([\+\-\s\d\.]+)y_pos:([\+\-\s\d\.]+)/;
   my $x = $1;
   my $y = $2;
@@ -291,6 +348,7 @@ sub communicate {
 
 
   $port->are_match("\n");
+  $port->lookclear;
   $port->write("\n");
   while(my $a = $port->lookfor) {
     print "#$a\n";
@@ -351,8 +409,14 @@ sub distance {
 }
 
 sub init_port {
-
-
+  
+  my $baudrate;
+  if( defined ($_[0]) ) {
+    $baudrate = $_[0];
+  } else {
+    $baudrate = 9600;
+  }
+    
   # talk to the serial interface
 
   $port = new Device::SerialPort($ser_dev);
@@ -363,11 +427,46 @@ sub init_port {
   }
 
   $port->user_msg('ON'); 
-  $port->baudrate(19200); 
+  $port->baudrate($baudrate); 
   $port->parity("none"); 
   $port->databits(8); 
   $port->stopbits(1); 
   $port->handshake("xoff"); 
   $port->write_settings;
+
+}
+
+
+sub slurp_drillfile {
+
+my @drillholes;
+open(LESEN,$drillfile)
+  or die "Fehler beim oeffnen von : $!\n";
+  
+my $current_tool_no;
+my %drilldias;
+
+  while(defined(my $i = <LESEN>)) {
+
+
+    if ( $i =~ /^(T\d+)C(\d+.\d+)/ ) {
+  #     print "found tool T".$1." with diameter ".$2."mm\n";
+      $drilldias{$1} = $2;
+    }
+    
+    if ( $i =~ /^(T\d+)$/ ) {
+      $current_tool_no = $1;
+    }
+    
+    if ( $i =~ /^X(\d+.\d+)Y(\d+.\d+)/ ) {
+  #     print "Tool $current_tool_no , $1 , $2\n";
+      my $this_x = $1 * $mirror_x;
+      my $this_y = $2 * $mirror_y;
+      push(@drillholes,{tool => $current_tool_no, x => $this_x, y => $this_y, dia => $drilldias{$current_tool_no}});
+    }
+    
+
+  }
+  return @drillholes;
 
 }

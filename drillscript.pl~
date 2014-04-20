@@ -4,34 +4,21 @@ use strict;
 use Device::SerialPort;
 use Time::HiRes;
 
+# the drillfile
+my $drillfile="./project.drl";
+# array of hashes, each hash contains info of
+# one hole
 
-open(LESEN,"./project.drl")
-  or die "Fehler beim oeffnen von : $!\n";
-  
-my @drillholes;
+# the serial port object
 my $port;
+# the address of the drill control tty
 my $ser_dev = "/dev/ttyACM0";
-my $current_tool_no;
-my %drilldias;
-
-while(defined(my $i = <LESEN>)) {
 
 
-  if ( $i =~ /^(T\d+)C(\d+.\d+)/ ) {
-#     print "found tool T".$1." with diameter ".$2."mm\n";
-    $drilldias{$1} = $2;
-  }
-  
-  if ( $i =~ /^(T\d+)$/ ) {
-    $current_tool_no = $1;
-  }
-  
-  if ( $i =~ /^X(\d+.\d+)Y(\d+.\d+)/ ) {
-#     print "Tool $current_tool_no , $1 , $2\n";
-    push(@drillholes,{tool => $current_tool_no, x => $1, y => $2, dia => $drilldias{$current_tool_no}});
-  }
+my @drillholes = slurp_drillfile();
 
-}
+
+
 
 
 
@@ -174,11 +161,8 @@ $dummy = <STDIN>;
 # my $c1 = $a1;
 # my $c2 = $a2;
 
-my ($c1,$c2) = get_coordinate();
-my ($c1,$c2) = get_coordinate();
-my ($c1,$c2) = get_coordinate();
-my ($c1,$c2) = get_coordinate();
-my ($c1,$c2) = get_coordinate();
+my ($c1,$c2);
+($c1,$c2) = get_coordinate();
 print "vector c : $c1 $c2\n";
 
 print "good, now move to bottom right drill hole and press enter\n";
@@ -187,11 +171,13 @@ $dummy = <STDIN>;
 # my $d1 = $b1;
 # my $d2 = $b2;
 
-my ($d1,$d2) = get_coordinate();
-my ($d1,$d2) = get_coordinate();
-my ($d1,$d2) = get_coordinate();
-my ($d1,$d2) = get_coordinate();
-my ($d1,$d2) = get_coordinate();
+my ($d1,$d2);
+($d1,$d2)= get_coordinate();
+($d1,$d2)= get_coordinate();
+($d1,$d2)= get_coordinate();
+($d1,$d2)= get_coordinate();
+($d1,$d2)= get_coordinate();
+
 print "vector d : $d1 $d2\n";
 
 my $p1 = $b1-$a1;
@@ -203,6 +189,39 @@ print "p: $p1,$p2\n";
 my $q1 = $d1-$c1;
 my $q2 = $d2-$c2;
 print "q: $q1,$q2\n";
+
+# this is the place where we make it a pure
+# rotation / translateon
+
+# we require that the corrected vector q has the same
+# length as p, so the transformation matrix is 
+# a pure rotation
+
+my $q_len = distance($q1,$q2,0,0);
+my $p_len = distance($p1,$p2,0,0);
+
+print "p_len : $p_len, q_len : $q_len";
+
+my $q_hat_1 = $q1/$q_len;
+my $q_hat_2 = $q2/$q_len;
+
+# calculate midpoint between c and d
+
+my $cd1 = ($c1 + $d1)/2;
+my $cd2 = ($c2 + $d2)/2;
+
+# calculate corrected c and d 
+
+$c1 = $cd1 - $q_hat_1*$p_len/2;
+$c2 = $cd2 - $q_hat_2*$p_len/2;
+
+
+$d1 = $cd1 + $q_hat_1*$p_len/2;
+$d2 = $cd2 + $q_hat_2*$p_len/2;
+
+# corrected q vector
+$q1 = $d1-$c1;
+$q2 = $d2-$c2;
 
 # now we can calculate sine and cosine coefficients
 
@@ -351,8 +370,14 @@ sub distance {
 }
 
 sub init_port {
-
-
+  
+  my $baudrate;
+  if( defined ($_[0]) ) {
+    $baudrate = $_[0];
+  } else {
+    $baudrate = 9600;
+  }
+    
   # talk to the serial interface
 
   $port = new Device::SerialPort($ser_dev);
@@ -363,11 +388,44 @@ sub init_port {
   }
 
   $port->user_msg('ON'); 
-  $port->baudrate(19200); 
+  $port->baudrate($baudrate); 
   $port->parity("none"); 
   $port->databits(8); 
   $port->stopbits(1); 
   $port->handshake("xoff"); 
   $port->write_settings;
+
+}
+
+
+sub slurp_drillfile {
+
+my @drillholes;
+open(LESEN,$drillfile)
+  or die "Fehler beim oeffnen von : $!\n";
+  
+my $current_tool_no;
+my %drilldias;
+
+  while(defined(my $i = <LESEN>)) {
+
+
+    if ( $i =~ /^(T\d+)C(\d+.\d+)/ ) {
+  #     print "found tool T".$1." with diameter ".$2."mm\n";
+      $drilldias{$1} = $2;
+    }
+    
+    if ( $i =~ /^(T\d+)$/ ) {
+      $current_tool_no = $1;
+    }
+    
+    if ( $i =~ /^X(\d+.\d+)Y(\d+.\d+)/ ) {
+  #     print "Tool $current_tool_no , $1 , $2\n";
+      push(@drillholes,{tool => $current_tool_no, x => $1, y => $2, dia => $drilldias{$current_tool_no}});
+    }
+    
+
+  }
+  return @drillholes;
 
 }
