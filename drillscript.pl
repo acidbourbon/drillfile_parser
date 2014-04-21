@@ -3,16 +3,33 @@
 use strict;
 use Device::SerialPort;
 use Time::HiRes;
+use Data::Dumper;
+
+#######################################
+############   options   ##############
+#######################################
 
 # the drillfile
 my $drillfile="./project.drl";
 
-my $dont_turn=0;
-my $mirror_x = -1; # 1 => no mirror, -1 => mirrored horiz
+my $dont_turn= 0; # 1 => do not perform turning transformation,
+# x and y axis of project are parallel to x and y on the table
+my $mirror_x = -1; # 1 => no mirror, -1 => mirrored horiz (-1 for PCB backside facing drill)
 my $mirror_y = 1; # 1 => no mirror, -1 => mirrored vert
 
-my $tolerance = 1; # mm , die if calibration fails 
+my $tolerance = 1; # mm , die if calibration residual (p-q) is bigger than tolerance
 
+my $oneSize = 0.8; # mm , if set to non-zero, all drill diameters will be set to
+# this value
+
+my $visit_intermediates = 1; # activate improved moving algorithm
+my $stray_factor = sqrt(2)*1.05;
+
+# can enter here calibration values for debug:
+# my ($c1,$c2) = (-6.500,-21.125);
+# my ($d1,$d2) = (+13.875,+14.625);
+
+my $verbose = 0;
 
 # drillfiles have to be generated with option "mirrored y axis"
 # otherwise the coordinates in the drillfile are not the same
@@ -176,14 +193,16 @@ my $dummy="";
 # }
 
 print "\n\n";
-print "move to top left drill hole and press enter\n";
-$dummy = <STDIN>;
+
 
 
 
 # my $c1 = $a1;
 # my $c2 = $a2;
+# unless(defined($c1) and defined($c2) and defined($d1) and defined ($d2)) {
 
+print "move to top left drill hole and press enter\n";
+$dummy = <STDIN>;
 my ($c1,$c2) = get_coordinate();
 $dummy = <STDIN>;
 ($c1,$c2) = get_coordinate();
@@ -199,6 +218,7 @@ $dummy = <STDIN>;
 my ($d1,$d2) = get_coordinate();
 $dummy = <STDIN>;
 ($d1,$d2) = get_coordinate();
+# }
 
 
 print "vector d : $d1 $d2\n";
@@ -271,7 +291,104 @@ print "\n\n";
 print "okay let us now drive to every hole!";
 $dummy = <STDIN>;
 
+
+
+my %absolved_holes;
+my @closest_drillholes;
+
+
 for my $i ( 0 .. $#drillholes ) {
+
+  unless ( $absolved_holes{$i} ) {
+    go_hole($i);
+    $absolved_holes{$i} = 1;
+    
+    last if ( scalar(keys %absolved_holes) == $#drillholes ); # break the loop if job is done, all holes have been drilled
+    
+    # check if there are some intermediate holes you could drill
+    
+    my $current_index = $i; # could be bottom right hole_distance
+    my $next_index = $i + 1;
+    my $intermediate_index;
+    my $intermediate_found = 0;
+    
+    do {
+      @closest_drillholes = 
+	sort { hole_distance($a->{"number"},$current_index) <=> hole_distance($b->{"number"},$current_index) } @drillholes;
+# 	print Dumper @closest_drillholes if $verbose;
+      
+      $intermediate_found = 0;
+      
+      for my $intermediate_hole (@closest_drillholes){
+        $intermediate_index = $intermediate_hole->{"number"};
+        print "probing intermediate index $intermediate_index\n" if $verbose;
+	next if ($absolved_holes{$intermediate_index});
+	print "Test 1 passed: not in absolved holes\n" if $verbose;
+	my $cur_next_dist = hole_distance($current_index,$next_index);
+	my $cur_inter_dist = hole_distance($current_index,$intermediate_index);
+        print "cur_next_dist:$cur_next_dist\ncur_inter_dist:$cur_inter_dist\n" if $verbose;
+	last if ($cur_inter_dist >= $cur_next_dist); # break if no holes closer than "next" hole
+	print "Test 2 passed: intermediate closer than next hole\n" if $verbose;
+	my $inter_next_dist = hole_distance($intermediate_index,$next_index);
+        print "inter_next_dist:$inter_next_dist\n" if $verbose;
+	last if ($inter_next_dist >= ($cur_next_dist*$stray_factor)); # break if distance from intermediate to next is longer than
+	print "Test 3 passed: inter_next dist < stray_factor*cur_next_dist\nintermediate_found!\n" if $verbose;
+	  # from current to next
+	# if I get here, I should have found a worthy intermediate hole
+	$intermediate_found = 1;
+	last;
+      }
+      
+      if ($intermediate_found){
+	go_hole($intermediate_index);
+	$absolved_holes{$intermediate_index} = 1;
+	$current_index = $intermediate_index;
+      }
+      
+    } while ($intermediate_found);
+
+
+    
+    
+ 
+    
+  }
+
+}
+
+
+
+
+# my ($t1,$t2) = transform_to_table(147,69);
+# print "t: $t1 , $t2\n";
+
+
+
+
+sub hole_distance {
+# give me two indices
+  my $n = shift;
+  my $m = shift;
+  
+  return distance( $drillholes[$n]{"x"},$drillholes[$n]{"y"},$drillholes[$m]{"x"},$drillholes[$m]{"y"});
+
+}
+
+# my ($t1,$t2) = get_coordinate(); 
+# 
+# print "t: $t1 , $t2\n";
+# 
+# $t1+=22;
+# $t2+=22;
+# print "t: $t1 , $t2\n";
+# 
+
+
+
+
+sub go_hole {
+
+  my $i = shift;
   my $holeX = $drillholes[$i]{"x"};
   my $holeY = $drillholes[$i]{"y"};
   
@@ -292,30 +409,6 @@ for my $i ( 0 .. $#drillholes ) {
     exit;
   }
 }
-
-# my ($t1,$t2) = transform_to_table(147,69);
-# print "t: $t1 , $t2\n";
-
-
-
-
-
-
-# my ($t1,$t2) = get_coordinate(); 
-# 
-# print "t: $t1 , $t2\n";
-# 
-# $t1+=22;
-# $t2+=22;
-# print "t: $t1 , $t2\n";
-# 
-
-
-
-
-
-
-
 
 
 
@@ -445,6 +538,7 @@ open(LESEN,$drillfile)
   
 my $current_tool_no;
 my %drilldias;
+my $hole_number= 0;
 
   while(defined(my $i = <LESEN>)) {
 
@@ -462,7 +556,11 @@ my %drilldias;
   #     print "Tool $current_tool_no , $1 , $2\n";
       my $this_x = $1 * $mirror_x;
       my $this_y = $2 * $mirror_y;
-      push(@drillholes,{tool => $current_tool_no, x => $this_x, y => $this_y, dia => $drilldias{$current_tool_no}});
+      if ($oneSize) {
+	push(@drillholes,{tool => 1, x => $this_x, y => $this_y, dia => $oneSize, number => $hole_number++});
+      } else {
+	push(@drillholes,{tool => $current_tool_no, x => $this_x, y => $this_y, dia => $drilldias{$current_tool_no}, number => $hole_number++});
+      }
     }
     
 
