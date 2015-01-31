@@ -4,22 +4,58 @@ use strict;
 use Device::SerialPort;
 use Time::HiRes;
 use Data::Dumper;
+use Getopt::Long;
+
+my $help=0;
+my $configFile=0;
+my $verbose=0;
+my $invx;
+my $invy;
+
+
+sub print_help{
+print <<EOF;  
+drillscript.pl -f <cadfile.drl> [OPTIONS]
+
+drillscript parses DRL files and moves the proxxon x-y-table underneath the drill
+to pass by all drill holes.
+
+options:
+
+-h, --help              print this help message
+-f, --file              the cad file to be processed
+--invx                  invert x axis
+--invy                  invert y axis
+--tolerance             set calibration tolerance
+                        (default = 1 mm)
+--onesize               set to drill diameter [mm] to 
+                        treat all drill holes as if they had
+                        given diameter
+--noturn                calibrate, but don't rotate
+-v, --verbose           verbose output
+                        
+  
+EOF
+exit;
+}
+
 
 #######################################
 ############   options   ##############
 #######################################
 
 # the drillfile
-my $drillfile="./project.drl";
+my $drillfile;
 
 my $dont_turn= 0; # 1 => do not perform turning transformation,
 # x and y axis of project are parallel to x and y on the table
-my $mirror_x = -1; # 1 => no mirror, -1 => mirrored horiz (-1 for PCB backside facing drill)
+
+my $mirror_x = 1; # 1 => no mirror, -1 => mirrored horiz (-1 for PCB backside facing drill)
 my $mirror_y = 1; # 1 => no mirror, -1 => mirrored vert
 
 my $tolerance = 1; # mm , die if calibration residual (p-q) is bigger than tolerance
 
-my $oneSize = 0.8; # mm , if set to non-zero, all drill diameters will be set to
+my $oneSize = 0; # mm , if set to non-zero, all drill diameters will be set to
 # this value
 
 my $visit_intermediates = 1; # activate improved moving algorithm
@@ -42,6 +78,30 @@ my $verbose = 0;
 
 # I recommend: Take your PCB from the front side, flip it on the vertical
 # axis, so top is still top. Select mirror_x = -1. Drill, enjoy!
+
+
+Getopt::Long::Configure(qw(gnu_getopt));
+GetOptions(
+           'help|h' => \$help,
+           'verbose|v' => \$verbose,
+           'config|c=s' => \$configFile,
+           'file|f=s'   => \$drillfile,
+           'file|f=s'   => \$drillfile,
+           'invx'       => \$invx,
+           'invy'       => \$invy,
+           'noturn'     => \$dont_turn,
+           'tolerance=s'=> \$tolerance,
+           'onesize=s'  => \$oneSize,
+           'help|h'     => \$help,
+           'verbose'    => \$verbose
+          );
+
+$mirror_x *= -1 if $invx;
+$mirror_y *= -1 if $invy;
+
+
+print_help() if $help;
+print_help() unless $drillfile;
 
 
 # array of hashes, each hash contains info of
