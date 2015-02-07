@@ -15,7 +15,7 @@ my $invy;
 
 sub print_help{
 print <<EOF;  
-drillscript.pl -f <cadfile.drl> [OPTIONS]
+drillscript.pl -f <cadfile.drl> --tty <address> [OPTIONS]
 
 drillscript parses DRL files and moves the proxxon x-y-table underneath the drill
 to pass by all drill holes.
@@ -23,18 +23,29 @@ to pass by all drill holes.
 options:
 
 -h, --help              print this help message
--f, --file              the cad file to be processed
+-f, --file <filename>   the cad file to be processed
+--tty <address>         the address of the COM port
+                        (if left out /dev/ttyACM0 is used)
 --invx                  invert x axis
 --invy                  invert y axis
---tolerance             set calibration tolerance
+--tolerance <number>    set calibration tolerance
                         (default = 1 mm)
---onesize               set to drill diameter [mm] to 
+--onesize <number>      set to drill diameter [mm] to 
                         treat all drill holes as if they had
                         given diameter
 --noturn                calibrate, but don't rotate
 -v, --verbose           verbose output
                         
-  
+example:
+
+drillscript.pl -f PCB_Project.drl --tty /dev/ttyACM0 --onesize 0.8 
+
+hints:
+
+mirror either x or y coordinates when you drill a PCB backside
+(PCB backside up)
+you still have to got to the top left and bottom right hole
+in the respectively mirrored view!
 EOF
 exit;
 }
@@ -67,6 +78,9 @@ my $stray_factor = sqrt(2)*1.05;
 
 my $verbose = 0;
 
+# the address of the drill control tty
+my $ser_dev = "/dev/ttyACM0";
+
 # drillfiles have to be generated with option "mirrored y axis"
 # otherwise the coordinates in the drillfile are not the same
 # as in the CAD view
@@ -93,7 +107,8 @@ GetOptions(
            'tolerance=s'=> \$tolerance,
            'onesize=s'  => \$oneSize,
            'help|h'     => \$help,
-           'verbose'    => \$verbose
+           'verbose'    => \$verbose,
+           'tty=s'      => \$ser_dev
           );
 
 $mirror_x *= -1 if $invx;
@@ -109,8 +124,6 @@ print_help() unless $drillfile;
 
 # the serial port object
 my $port;
-# the address of the drill control tty
-my $ser_dev = "/dev/ttyACM0";
 
 
 my @drillholes = slurp_drillfile();
