@@ -6,9 +6,10 @@ use Time::HiRes;
 use Data::Dumper;
 use Getopt::Long;
 
+use SVG;
+
 my $help=0;
 my $configFile=0;
-my $verbose=0;
 my $invx;
 my $invy;
 
@@ -132,7 +133,6 @@ my @drillholes = slurp_drillfile();
 
 
 
-
 # for my $entry (@drillholes) {
 # 
 # print "Tool: ".$entry->{"tool"}."\n";
@@ -233,6 +233,7 @@ for my $i ( 0 .. $#drillholes ) {
 print "topleftindex: $topleftindex\n";
 print "bottomrightindex: $bottomrightindex\n";
 
+holes_pattern_svg();
 
 # transformation vectors
 
@@ -639,5 +640,129 @@ my $hole_number= 0;
 
   }
   return @drillholes;
+
+}
+
+
+sub holes_pattern_svg {
+
+  my $scale = 12; # pixel per mm
+  my $margin = 10; # mm
+  my $legend_width = 50; #mm
+  my $legend_padding = 5;
+  
+  my $pic_width  = ($maxX-$minX+2*$margin +$legend_width)*$scale;
+  my $pic_height = ($maxY-$minY+2*$margin)*$scale;
+  
+  my $legend_x = $maxX-$minX+2*$margin + $legend_padding;
+  my $legend_y = $legend_padding;
+  my $legend_spacing = 5;
+  
+  my $tools_dias;
+  
+  my @colors = ( "red","blue","purple","green","orange","grey","yellow");
+  
+  
+  my $svg_file = "./holes.svg";
+  
+  my $svg = SVG->new(
+        -printerror => 1,
+        -raiseerror => 0,
+        -indent     => '  ',
+        -docroot => 'svg', #default document root element (SVG specification assumes svg). Defaults to 'svg' if undefined
+        #-sysid      => 'abc', #optional system identifyer 
+        #-pubid      => "-//W3C//DTD SVG 1.0//EN", #public identifyer default value is "-//W3C//DTD SVG 1.0//EN" if undefined
+        #-namespace => 'mysvg',
+        -inline   => 1,
+        id          => 'document_element',
+    width => $pic_width,
+    height => $pic_height,
+  );
+  
+  my $scaler = $svg->group(
+      transform => "scale($scale)"
+  );
+  my $tx = -$minX+$margin;
+  my $ty = -$minY+$margin;
+  my $translate1 = $scaler->group(
+      transform => "translate($tx,$ty)"
+    );
+  for my $hole (@drillholes) {
+    my $tool_number = $hole->{tool};
+    $tool_number =~ s/\D//g;
+    $tool_number--;
+    $tools_dias->{$hole->{tool}} = $hole->{dia};
+#     print "$tool_number\n";
+     $translate1->circle(
+        cx => $hole->{x} ,
+        cy => $hole->{y} ,
+        r => $hole->{dia}/2 ,
+        style=>{
+              'stroke'=>'none',
+#               'fill'=>'rgb(180,180,180)',
+              'fill'=>$colors[$tool_number],
+              'stroke-width'=>'0.5',
+          }
+      );
+  }
+  
+  for my $hole (@drillholes[$topleftindex], @drillholes[$bottomrightindex]){
+    my $crosswidth = 2;
+    $translate1->line(
+         x1=> $hole->{x}-$crosswidth, y1=>$hole->{y},
+         x2=> $hole->{x}+$crosswidth, y2=>$hole->{y},
+       style=>{
+             'stroke'=>'black',
+             'fill'=>'none',
+             'stroke-width'=> 2/$scale,
+         }
+    );
+    $translate1->line(
+         x1=> $hole->{x}, y1=>$hole->{y}-$crosswidth,
+         x2=> $hole->{x}, y2=>$hole->{y}+$crosswidth,
+       style=>{
+             'stroke'=>'black',
+             'fill'=>'none',
+             'stroke-width'=> 2/$scale,
+         }
+    );
+  
+  }
+  
+  my $text_y = $legend_y;
+  for my $tool (sort keys %{$tools_dias}){
+    $scaler->text(
+      x=>$legend_x+5, y=>$text_y,
+      style => 'font-size: 3px',
+    )->cdata("$tool: ".$tools_dias->{$tool}." mm");
+    print("$tool: ".$tools_dias->{$tool}." mm\n");
+    
+    my $tool_number = $tool;
+    $tool_number =~ s/\D//g;
+    $tool_number--;
+     $scaler->circle(
+        cx => $legend_x ,
+        cy => $text_y ,
+        r => $tools_dias->{$tool}/2 ,
+        style=>{
+              'stroke'=>'none',
+#               'fill'=>'rgb(180,180,180)',
+              'fill'=>$colors[$tool_number],
+              'stroke-width'=>'0.5',
+          }
+      );
+      
+    $text_y+=$legend_spacing;
+  }
+  
+  if (defined($svg_file)){
+    open(SVGFILE, ">".$svg_file) or die "could not open $svg_file for writing!\n";
+    # now render the SVG object, implicitly use svg namespace
+    print SVGFILE $svg->xmlify;
+    close(SVGFILE);
+  } else {
+    print $svg->xmlify;
+  }
+
 
 }
